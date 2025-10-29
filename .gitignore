@@ -1,0 +1,17 @@
+
+__pycache__/
+.mypy_cache/
+.pytest_cache/
+.vscode/
+
+.vscode/
+
+venv/
+env/
+
+*.log
+*.tmp
+
+*.so
+*.dll
+*.pyd

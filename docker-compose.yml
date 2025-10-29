@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  lider-a:
+    image: postgres:14-alpine
+    container_name: lider-a
+    environment:
+      - POSTGRES_USER=user_a
+      - POSTGRES_PASSWORD=pass_a
+      - POSTGRES_DB=db_a
+      - PGDATA=/var/lib/postgresql/data/pgdata_a
+    ports:
+      - "5431:5432"
+    volumes:
+      
+      - ./init-scripts:/docker-entrypoint-initdb.d
+      - ./lider-a-config/postgresql.conf:/usr/local/share/postgresql/postgresql.conf.sample
+      - ./lider-a-config/pg_hba.conf:/usr/local/share/postgresql/pg_hba.conf.sample
+      - lider-a-data:/var/lib/postgresql/data
+    networks:
+      - app-network
+
+    command: postgres -c config_file=/usr/local/share/postgresql/postgresql.conf.sample -c hba_file=/usr/local/share/postgresql/pg_hba.conf.sample
+
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  lider-a-data:
