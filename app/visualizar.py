@@ -1,104 +1,69 @@
 import psycopg2
-from config import SERVERS, ALL_SERVERS, LOCAL_SERVERS 
+from app.config import SERVERS, LOCAL_SERVERS 
 from prettytable import PrettyTable
 from collections import defaultdict
-
-DBNAME_KEY = 'dbname'
+from datetime import timezone
 
 def connect_to_db(servidor_id):
-    """Conecta ao banco de dados específico, excluindo a chave 'tipo'."""
     config = SERVERS.get(servidor_id)
-    if not config:
-        print(f"❌ Configuração do servidor {servidor_id} não encontrada.")
-        return None
-    
+    if not config: return None
     connect_args = {k: v for k, v in config.items() if k != 'tipo'}
-    connect_args['connect_timeout'] = 5 
-    
+    connect_args['connect_timeout'] = 5
     try:
         conn = psycopg2.connect(**connect_args)
         return conn
-    except psycopg2.OperationalError as e:
-        # Silenciar a mensagem de erro se a Máquina A estiver offline
-        # print(f"❌ Erro de conexão com o servidor {servidor_id}: {e}")
+    except psycopg2.OperationalError:
         return None
 
-def visualizar_estado():
-    """Conecta aos servidores LOCAIS e exibe o estado das matrículas em tabelas separadas."""
-
-    print("--- Visualização do Estado Local do Sistema ---")
-    
+def visualizar_alunos():
+    print("\n--- Opção 5: Visualização de Matrículas (Modo Diagnóstico) ---")
     for servidor_id in LOCAL_SERVERS:
         conn = connect_to_db(servidor_id)
-        
         if conn:
             cursor = conn.cursor()
-            
             try:
-                # 1. Consulta SQL: Busca todas as matrículas
+                
                 cursor.execute("""
                     SELECT 
-                        d.nome AS disciplina, 
-                        d.vagas_totais, 
-                        m.nome_aluno,
-                        m.timestamp_matricula,
-                        m.status
+                        m.id AS matricula_uuid, d.nome AS disciplina,
+                        d.vagas_totais, m.nome_aluno, 
+                        m.timestamp_matricula, m.status
                     FROM matriculas m
                     JOIN disciplinas d ON m.disciplina_id = d.id
-                    ORDER BY d.nome, m.timestamp_matricula;
+                    WHERE m.status != 'REMOVIDA' 
+                      AND (d.is_deleted IS NULL OR d.is_deleted = false)
+                    ORDER BY d.nome, m.timestamp_matricula; 
                 """)
-                
                 rows = cursor.fetchall()
-                
-                print(f"\n--- Servidor: {servidor_id} ---")
-                
+                print(f"\n=== Todas as Matrículas (Ativas e Espera) no Servidor: {servidor_id} ===")
                 if not rows:
                     print("Nenhuma matrícula encontrada nesta base de dados.")
-                    
-                    # Se não há matrículas, exibe apenas as disciplinas vazias (melhor visualização)
-                    cursor.execute("SELECT nome, vagas_totais FROM disciplinas ORDER BY nome;")
-                    disciplinas_vazias = cursor.fetchall()
-                    if disciplinas_vazias:
-                         print("\n--- Catálogo de Disciplinas (Sem Matrículas) ---")
-                         for nome, vagas in disciplinas_vazias:
-                              print(f"Disciplina: {nome} (Vagas Totais: {vagas})")
-                    return
+                    continue
 
-                # 2. Agrupamento: Organiza as matrículas por disciplina
                 disciplinas_data = defaultdict(list)
-                disciplinas_vagas = {} # Para armazenar vagas
-                
-                for row in rows:
-                    disciplina_nome, vagas, aluno, timestamp, status = row
-                    disciplinas_data[disciplina_nome].append((aluno, timestamp, status))
+                disciplinas_vagas = {}
+                for matricula_uuid, disciplina_nome, vagas, aluno, timestamp_db, status in rows:
+                    disciplinas_data[disciplina_nome].append((matricula_uuid, aluno, timestamp_db, status))
                     disciplinas_vagas[disciplina_nome] = vagas
-                
-                # 3. Impressão Separada: Cria uma tabela para cada disciplina
-                for disciplina_nome in sorted(disciplinas_data.keys()):
-                    
-                    vagas = disciplinas_vagas[disciplina_nome]
-                    print(f"\nDisciplina: {disciplina_nome} (Vagas Totais: {vagas})")
-                    
-                    table = PrettyTable()
-                    table.field_names = ["Aluno", "Timestamp", "Status"]
-                    
-                    for aluno, timestamp, status in disciplinas_data[disciplina_nome]:
-                        # Formata o timestamp para exibição
-                        ts_str = timestamp.strftime("%Y-%m-%d %H:%M:%S") 
-                        table.add_row([aluno, ts_str, status])
-                    
-                    print(table)
-                
-            except psycopg2.Error as e:
-                print(f"❌ Erro SQL ao consultar {servidor_id}: {e}")
-            finally:
-                if 'cursor' in locals() and cursor:
-                    cursor.close()
-                if 'conn' in locals() and conn:
-                    conn.close()
-        else:
-            print(f"--- Servidor: {servidor_id} ---")
-            print("❌ Servidor inacessível ou offline.")
 
-if __name__ == '__main__':
-    visualizar_estado()
+                for disciplina_nome in sorted(disciplinas_data.keys()):
+                    vagas = disciplinas_vagas[disciplina_nome]
+                    alunos_total = len(disciplinas_data[disciplina_nome])
+                    print(f"\nDisciplina: {disciplina_nome} (Vagas Totais: {vagas}, Total de Entradas: {alunos_total})")
+                    table = PrettyTable()
+                    table.field_names = ["ID Matrícula (UUID)", "Aluno", "Data/Hora Matrícula", "Status Real"]
+                    table.align = "l"
+                    for matricula_uuid, aluno, timestamp_db, status in disciplinas_data[disciplina_nome]:
+                        timestamp_utc = timestamp_db.replace(tzinfo=timezone.utc)
+                        timestamp_local = timestamp_utc.astimezone(None)
+                        ts_str = timestamp_local.strftime("%Y-%m-%d %H:%M:%S")
+                        table.add_row([matricula_uuid, aluno, ts_str, status])
+                    print(table)
+            except psycopg2.Error as e:
+                print(f"❌ Erro SQL ao consultar matrículas em {servidor_id}: {e}")
+            finally:
+                if cursor: cursor.close()
+                if conn: conn.close()
+        else:
+            print(f"\n=== Servidor: {servidor_id} ===")
+            print("❌ Servidor inacessível ou offline.")
